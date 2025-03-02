@@ -164,7 +164,7 @@ function ExpenseModal() {
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(fileUri);
           await database.getAllAsync<DBExpenseType>(
-            "DELETE * FROM expenses"
+            "DELETE FROM expenses"
           );
         } else {
           Alert.alert(
