@@ -80,7 +80,7 @@ const createDbIfNeeded = async (db: SQLiteDatabase) => {
 
 export default function RootLayout() {
   return (
-    <View style={{ flex: 1 }}>
+    <>
       <SQLiteProvider databaseName={DB_NAME} onInit={createDbIfNeeded}>
         <Stack
           screenOptions={{
@@ -101,10 +101,12 @@ export default function RootLayout() {
             //   );
             // },
           }}
-        />
+        >
+          <Stack.Screen name="index" options={{}} />
+        </Stack>
       </SQLiteProvider>
       <StatusBar style="auto" />
-    </View>
+    </>
   );
 }
 

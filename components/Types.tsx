@@ -1,5 +1,5 @@
 export type DBExpenseType = {
-  id?: number;
+  id: number;
   amount: string;
   store: string;
   paymentType: string;

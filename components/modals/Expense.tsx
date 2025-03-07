@@ -20,6 +20,7 @@ import {
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { DownloadIcon } from "../Icons";
+import { format, setHours, setMilliseconds, setMinutes, setSeconds, subDays } from "date-fns";
 
 // Definición de los tipos para los datos del formulario
 type FormData = DBExpenseType;
@@ -44,6 +45,8 @@ function ExpenseModal() {
   });
 
   const database = useSQLiteContext();
+  const { expense_id } = useLocalSearchParams();
+  const expenseId = expense_id ? Number(expense_id) : false;
 
   const [submittedData, setSubmittedData] = useState<FormData | null>(null);
 
@@ -79,36 +82,46 @@ function ExpenseModal() {
     onChange(strValue);
   };
 
+  const formatDate = (isoDate: string) => {
+    return format(new Date(isoDate), "yyyy-MM-dd HH:mm:ss.SSS");
+  };
+
   const onSubmit: SubmitHandler<FormData> = async (data) => {
     try {
-      // Insertar un nuevo registro
-      let statement = await database.prepareAsync(
-        `INSERT INTO expenses (id, amount, store, paymentType, date, category)
-       VALUES ($id, $amount, $store, $paymentType, $date, $category);`
-      );
+      if (expenseId) {
+        await database.runAsync(
+          `UPDATE expenses
+           SET amount = ?, store = ?, paymentType = ?, date = ?,
+               category = ?
+           WHERE id = ?;`,
+          [
+            data.amount ?? 0,
+            data.store ?? "",
+            data.paymentType ?? "unknown",
+            formatDate(data.date) ?? formatDate(new Date().toISOString()), // Formato ISO 8601
+            data.category ?? "Otros",
+            expenseId, // ID del cigarro que se actualiza
+          ]
+        );
+      } else {
+        // Insertar un nuevo registro
+        let statement = await database.prepareAsync(
+          `INSERT INTO expenses (id, amount, store, paymentType, date, category)
+         VALUES ($id, $amount, $store, $paymentType, $date, $category);`
+        );
 
-      let result = await statement.executeAsync({
-        $amount: data.amount ?? 0,
-        $store: data.store ?? "",
-        $paymentType: data.paymentType ?? "unknown",
-        $date: data.date ?? new Date().toISOString(), // Formato ISO 8601
-        $category: data.category ?? "Otros",
-      });
-      setSubmittedData(data);
+        await statement.executeAsync({
+          $amount: data.amount ?? 0,
+          $store: data.store ?? "",
+          $paymentType: data.paymentType ?? "unknown",
+          $date: formatDate(new Date(data.date).toISOString()) ?? formatDate(new Date().toISOString()), // Formato ISO 8601
+          $category: data.category ?? "Otros",
+        });
+        setSubmittedData(data);
+      }
 
-      // 🛠 Restablecer el formulario correctamente
-      reset({
-        amount: "",
-        store: "",
-        paymentType: "",
-        date: new Date().toISOString(),
-        category: "",
-      });
-
-      // 🧹 También limpiar los estados relacionados
-      setSelectedCategory("");
-      setSelectedPaymentType("");
-      setDateTime(new Date());
+      reset();
+      router.back();
     } catch (error) {
       console.error("Error al insertar o actualizar el registro:", error);
     }
@@ -141,42 +154,70 @@ function ExpenseModal() {
   };
 
   const handleOnPressDownload = async () => {
-      try {
-        // Obtener los gastos de la base de datos
-        const expenses = await database.getAllAsync<DBExpenseType>(
-          "SELECT * FROM expenses"
+    try {
+      // Obtener los gastos de la base de datos
+      const expenses = await database.getAllAsync<DBExpenseType>(
+        "SELECT * FROM expenses"
+      );
+
+      // Convertir los datos a JSON
+      const jsonContent = JSON.stringify(expenses, null, 2);
+
+      // Ruta donde se guardará el archivo
+      const fileUri = `${FileSystem.documentDirectory}expenses.json`;
+
+      // Guardar el archivo en el sistema
+      await FileSystem.writeAsStringAsync(fileUri, jsonContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      Alert.alert("Éxito", "Archivo guardado correctamente.");
+
+      // Compartir el archivo si el sistema lo permite
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri);
+        await database.getAllAsync<DBExpenseType>("DELETE FROM expenses");
+      } else {
+        Alert.alert(
+          "Descarga",
+          "El archivo ha sido guardado en el almacenamiento interno."
         );
-  
-        // Convertir los datos a JSON
-        const jsonContent = JSON.stringify(expenses, null, 2);
-  
-        // Ruta donde se guardará el archivo
-        const fileUri = `${FileSystem.documentDirectory}expenses.json`;
-  
-        // Guardar el archivo en el sistema
-        await FileSystem.writeAsStringAsync(fileUri, jsonContent, {
-          encoding: FileSystem.EncodingType.UTF8,
-        });
-  
-        Alert.alert("Éxito", "Archivo guardado correctamente.");
-  
-        // Compartir el archivo si el sistema lo permite
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(fileUri);
-          await database.getAllAsync<DBExpenseType>(
-            "DELETE FROM expenses"
-          );
-        } else {
-          Alert.alert(
-            "Descarga",
-            "El archivo ha sido guardado en el almacenamiento interno."
-          );
-        }
-      } catch (error) {
-        console.error("Error al guardar el archivo:", error);
-        Alert.alert("Error", "No se pudo guardar el archivo.");
       }
-    };
+    } catch (error) {
+      console.error("Error al guardar el archivo:", error);
+      Alert.alert("Error", "No se pudo guardar el archivo.");
+    }
+  };
+
+  useEffect(() => {
+    if (expense_id) {
+      const loadPerson = async () => {
+        try {
+          const result = await database.getFirstAsync<DBExpenseType>(
+            "SELECT * FROM expenses WHERE id = ?",
+            [expenseId]
+          );
+          if (result) {
+            reset({
+              id: result.id,
+              store: result.store,
+              amount: result.amount,
+              category: result.category,
+              paymentType: result.paymentType,
+            });
+
+            setSelectedCategory(result.category);
+            setSelectedPaymentType(result.paymentType);
+            setDateTime(new Date(result.date));
+          }
+        } catch (error) {
+          console.error("Error cargando el motivo:", error);
+        }
+      };
+
+      loadPerson();
+    }
+  }, [expense_id]);
 
   return (
     <SafeAreaView>
@@ -224,6 +265,10 @@ function ExpenseModal() {
             <>
               <Text style={{ marginBottom: 5 }}>Tipo de pago</Text>
               <SelectList
+                defaultOption={paymentTypes.find(
+                  (paymentType) =>
+                    paymentType.key.toString() == selectedPaymentType
+                )}
                 placeholder="Seleccione un tipo de pago"
                 onSelect={() => {
                   handlePaymentTypeChange(selectedPaymentType, onChange);
@@ -256,6 +301,9 @@ function ExpenseModal() {
             <>
               <Text style={{ marginBottom: 5 }}>Categoria</Text>
               <SelectList
+                defaultOption={categories.find(
+                  (category) => category.key.toString() == selectedCategory
+                )}
                 placeholder="Seleccione una categoria"
                 onSelect={() => {
                   handleCategoryChange(selectedCategory, onChange);
@@ -279,14 +327,14 @@ function ExpenseModal() {
           textColor="white"
           style={styles.button}
         >
-          Registrar gasto
+          {expenseId ? "Actualizar" : "Registrar"} gasto
         </Button>
         <Button
           onPress={handleOnPressDownload}
           textColor="white"
-          style={{...styles.button, backgroundColor: "skyblue"}}
+          style={{ ...styles.button, backgroundColor: "skyblue" }}
         >
-          Descargar gastos <DownloadIcon size={15} color="white"/>
+          Descargar gastos <DownloadIcon size={15} color="white" />
         </Button>
       </ScrollView>
     </SafeAreaView>
